@@ -1,8 +1,7 @@
 const mysql = require('mysql2/promise');
-require('dotenv').config();
 
-export default class dbController {
-    constructor(params = process.env) {
+class dbController {
+    constructor(params) {
         this.pool = null;
 
         this.poolParams = {
@@ -55,3 +54,4 @@ export default class dbController {
 
 // const db = new dbController();
 // export default db;
+module.exports = dbController;

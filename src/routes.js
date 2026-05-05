@@ -182,4 +182,8 @@ router.post('/appointments', async (req, res) => {
     }
 });
 
+router.get('/ping', (req, res) => {
+    res.json({ ping: 'pong' });
+})
+
 module.exports = router;

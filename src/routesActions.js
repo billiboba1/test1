@@ -1,4 +1,5 @@
-import dbController from './db.js';
+const dbController = require('./db')
+require('dotenv').config();
 
 const {
     validatePhone,
@@ -33,15 +34,17 @@ class routesActions extends dbController {
     }
 
     async getSchedule(filters = {}) {
-        const { 
+
+
+        const {
             date, 
-            time_from, 
+            time_from,
             time_to, 
             is_free, 
             doctor_id, 
             patient_id 
         } = filters;
-        
+
         let sql = `
             SELECT 
                 s.id,
@@ -62,21 +65,19 @@ class routesActions extends dbController {
             FROM Schedule s
             LEFT JOIN Doctors d ON s.doctor_id = d.id
             LEFT JOIN Patients p ON s.patient_id = p.id
-            WHERE 1=1
+            WHERE s.date = ?
         `;
         
         const params = [];
-        
-        if (date) {
-            sql += ` AND s.date = ?`;
-            params.push(date);
-        }
+        params.push(date);
         
         if (time_from) {
             sql += ` AND s.time_from >= ?`;
-            params.push(time_from);
+            const timeFrom = new Date(`${date}T${time_from}`);
+
+            params.push(timeFrom.toISOString());
         }
-        
+
         if (time_to) {
             sql += ` AND s.time_to <= ?`;
             params.push(time_to);
@@ -99,6 +100,8 @@ class routesActions extends dbController {
         }
         
         sql += ` ORDER BY s.doctor_id, s.time_from`;
+        console.log("sql:", sql)
+        console.log("params:", params)
         
         const result = await this.query(sql, params);
         return result;
@@ -131,5 +134,4 @@ class routesActions extends dbController {
     }
 }
 
-const routesActions = new routesActions();
-export default routesActions;
+module.exports = new routesActions(process.env);

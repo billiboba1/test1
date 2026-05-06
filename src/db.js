@@ -1,7 +1,7 @@
 const mysql = require('mysql2/promise');
 require('dotenv').config();
 
-export default class dbController {
+class dbController {
     constructor(params = process.env) {
         this.pool = null;
 
@@ -10,7 +10,7 @@ export default class dbController {
             port: params.DB_PORT || 3306,
             user: params.DB_USER || 'root',
             password: params.DB_PASSWORD || '',
-            database: params.DB_NAME || 'medical_db',
+            database: params.DB_NAME || 'test_schema_a_shadrin_1',
             waitForConnections: true,
             connectionLimit: 10,
             queueLimit: 0,
@@ -53,5 +53,4 @@ export default class dbController {
     }
 }
 
-// const db = new dbController();
-// export default db;
+module.exports = dbController;

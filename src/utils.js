@@ -1,18 +1,17 @@
-// src/utils.js
-const { v4: uuidv4 } = require('uuid');
+const crypto = require('crypto');
 
 // ============= ГЕНЕРАЦИЯ UUID =============
-export function generateUUID() {
-    return uuidv4();
+function generateUUID() {
+    return crypto.randomUUID();
 }
 
 // ============= ВАЛИДАЦИЯ =============
-export function validatePhone(phone) {
+function validatePhone(phone) {
     const phoneRegex = /^\+7[0-9]{10}$/;
     return phoneRegex.test(phone);
 }
 
-export function validateDate(date) {
+function validateDate(date) {
     if (!date) {
         return false;
     }
@@ -26,7 +25,7 @@ export function validateDate(date) {
     return !isNaN(parsedDate.getTime());
 }
 
-export function validateDateTime(datetime) {
+function validateDateTime(datetime) {
     if (!datetime) {
         return false;
     }
@@ -35,22 +34,17 @@ export function validateDateTime(datetime) {
     return !isNaN(parsedDate.getTime());
 }
 
-export function validateGender(gender) {
+function validateGender(gender) {
     return ['male', 'female'].includes(gender);
 }
 
-export function isSlotInPast(slotTime) {
+function isSlotInPast(slotTime) {
     const now = new Date();
     const slotDate = new Date(slotTime);
     return slotDate < now;
 }
 
-/**
- * Проверка UUID формата
- * @param {string} uuid - UUID для проверки
- * @returns {boolean}
- */
-export function validateUUID(uuid) {
+function validateUUID(uuid) {
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     return uuidRegex.test(uuid);
 }
@@ -71,7 +65,7 @@ function validateRequiredFields(data, requiredFields) {
 }
 
 // ============= ФОРМАТИРОВАНИЕ ОТВЕТОВ =============
-export function formatResponse(success, data = null, message = null) {
+function formatResponse(success, data = null, message = null) {
     const response = { success };
 
     if (data !== null) {
@@ -85,7 +79,7 @@ export function formatResponse(success, data = null, message = null) {
     return response;
 }
 
-export function formatError(error, statusCode = 400) {
+function formatError(error, statusCode = 400) {
     return {
         success: false,
         error: error,
@@ -93,8 +87,8 @@ export function formatError(error, statusCode = 400) {
     };
 }
 
-// =========าคม ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =============
-export function cleanObject(obj) {
+// ========= ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =============
+function cleanObject(obj) {
     const cleaned = {};
     for (const [key, value] of Object.entries(obj)) {
         if (value !== undefined && value !== null && value !== '') {
@@ -104,18 +98,21 @@ export function cleanObject(obj) {
     return cleaned;
 }
 
-export function groupBy(array, key) {
-    return array.reduce((result, item) => {
-        const groupKey = item[key];
-        if (!result[groupKey]) {
-            result[groupKey] = [];
-        }
-        result[groupKey].push(item);
-
-        return result;
-    }, {});
+function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-export function delay(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
+module.exports = {
+    delay,
+    cleanObject,
+    formatError,
+    formatResponse,
+    validateRequiredFields,
+    validateUUID,
+    isSlotInPast,
+    validateGender,
+    validateDateTime,
+    validateDate,
+    validatePhone,
+    generateUUID,
 }

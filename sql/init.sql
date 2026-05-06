@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS Patients (
     surname VARCHAR(50) NOT NULL,
     patronymic VARCHAR(50),
     gender ENUM('male', 'female'),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS Doctors (
@@ -18,13 +18,13 @@ CREATE TABLE IF NOT EXISTS Doctors (
     surname VARCHAR(50) NOT NULL,
     patronymic VARCHAR(50),
     spec VARCHAR(30) NOT NULL,
-    price DECIMAL(10, 2) NOT NULL, 
+    price DECIMAL(10, 2) NOT NULL
 )
 
 CREATE TABLE IF NOT EXISTS Schedule (
     id VARCHAR(36) PRIMARY KEY,
     doctor_id VARCHAR(36),
-    date DATE NOT_NULL,
+    date DATE NOT NULL,
     time_from DATETIME NOT NULL,
     time_to DATETIME NOT NULL,
     is_free BOOLEAN DEFAULT TRUE,

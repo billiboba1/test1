@@ -1,4 +1,4 @@
-import dbController from './db.js';
+const dbController = require('db');
 
 const {
     validatePhone,
@@ -7,8 +7,10 @@ const {
     isSlotInPast
 } = require('./utils');
 
+require('dotenv').config();
+
 class routesActions extends dbController {
-    constructor(params = {}) {
+    constructor(params) {
         super(params);
     }
 
@@ -62,24 +64,30 @@ class routesActions extends dbController {
             FROM Schedule s
             LEFT JOIN Doctors d ON s.doctor_id = d.id
             LEFT JOIN Patients p ON s.patient_id = p.id
-            WHERE 1=1
+            WHERE s.date = ?
         `;
         
         const params = [];
         
-        if (date) {
-            sql += ` AND s.date = ?`;
-            params.push(date);
-        }
+        params.push(date);
         
         if (time_from) {
             sql += ` AND s.time_from >= ?`;
-            params.push(time_from);
+
+            // const timeTo = new Date(`${date}T${time_from}`);
+            
+            const timeFrom = new Date(`${date}T${time_from}`);
+            params.push(timeFrom.toISOString());
         }
         
         if (time_to) {
             sql += ` AND s.time_to <= ?`;
             params.push(time_to);
+
+            // const timeTo = new Date(`${date}T${time_from}`);
+            
+            const timeTo = new Date(`${date}T${time_from}`);
+            params.push(timeTo.toISOString());
         }
         
         if (is_free !== undefined && is_free !== null) {
@@ -101,6 +109,30 @@ class routesActions extends dbController {
         sql += ` ORDER BY s.doctor_id, s.time_from`;
         
         const result = await this.query(sql, params);
+        result.map((item) => {
+            return {
+                id: item.id,
+                doctor_id: item.doctor_id,
+                date: item.date,
+                time_from: item.time_from,
+                time_to: item.time,
+                is_free: item.is_free,
+                patient_id: item.patient_id,
+                type: item.type,
+                doctor: {
+                    name: item.doctor_name,
+                    surname: item.doctor_surname,
+                    patronymic: item.doctor_patronymic,
+                    spec: item.doctor_spec,
+                    price: item.doctor_price,
+                },
+                patient: { 
+                    name: item.patient_name,
+                    surname: item.patient_surname,
+                },
+            };
+        });
+        
         return result;
     }
 
@@ -131,5 +163,4 @@ class routesActions extends dbController {
     }
 }
 
-const routesActions = new routesActions();
-export default routesActions;
+module.exports = new routesActions(process.env);

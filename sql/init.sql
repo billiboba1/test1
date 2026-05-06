@@ -54,31 +54,31 @@ CREATE PROCEDURE GenerateWeeklySlots(
     IN p_start_date DATE
 )
 BEGIN
-    DECLARE current_date DATE;
-    DECLARE current_time DATETIME;
+    DECLARE current_date1 DATE;
+    DECLARE current_time1 DATETIME;
     DECLARE end_time DATETIME;
     DECLARE slot_end DATETIME;
     
-    SET current_date = p_start_date;
+    SET current_date1 = p_start_date;
     
-    WHILE current_date <= DATE_ADD(p_start_date, INTERVAL 6 DAY) DO
+    WHILE current_date1 <= DATE_ADD(p_start_date, INTERVAL 6 DAY) DO
         -- Проверяем, что день недели не выходной (1-5 = Пн-Пт)
-        IF DAYOFWEEK(current_date) BETWEEN 2 AND 6 THEN
-            SET current_time = TIMESTAMP(current_date, '09:00:00');
-            SET end_time = TIMESTAMP(current_date, '21:00:00');
+        IF DAYOFWEEK(current_date1) BETWEEN 2 AND 6 THEN
+            SET current_time1 = TIMESTAMP(current_date1, '09:00:00');
+            SET end_time = TIMESTAMP(current_date1, '21:00:00');
             
-            WHILE current_time < end_time DO
-                SET slot_end = DATE_ADD(current_time, INTERVAL 30 MINUTE);
+            WHILE current_time1 < end_time DO
+                SET slot_end = DATE_ADD(current_time1, INTERVAL 30 MINUTE);
                 
                 -- Вставляем слот, если его еще нет
                 INSERT IGNORE INTO Schedule (id, doctor_id, date, time_from, time_to, is_free)
-                VALUES (UUID(), p_doctor_id, current_date, current_time, slot_end, TRUE);
+                VALUES (UUID(), p_doctor_id, current_date1, current_time1, slot_end, TRUE);
                 
-                SET current_time = slot_end;
+                SET current_time1 = slot_end;
             END WHILE;
         END IF;
         
-        SET current_date = DATE_ADD(current_date, INTERVAL 1 DAY);
+        SET current_date1 = DATE_ADD(current_date1, INTERVAL 1 DAY);
     END WHILE;
 END$$
 

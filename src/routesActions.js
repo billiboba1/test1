@@ -1,4 +1,4 @@
-const dbController = require('db');
+const dbController = require('./db');
 
 const {
     validatePhone,

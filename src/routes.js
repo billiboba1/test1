@@ -1,11 +1,11 @@
 // routes.js
 const express = require('express');
-const db = require('./db');
 const routesActions = require('./routesActions');
 const {
     generateUUID,
     validateRequiredFields,
     validateDate,
+    validateDateNotInPast,
     validateUUID,
     formatResponse,
     formatError
@@ -79,6 +79,12 @@ router.get('/schedule', async (req, res) => {
                 formatError('Неверный формат даты. Используйте YYYY-MM-DD')
             );
         }
+
+        if (!validateDateNotInPast(date)) {
+            return res.status(400).json(
+                formatError('Дата не может быть раньше сегодняшней')
+            );
+        }
         
         // Валидация UUID если переданы
         if (doctor_id && !validateUUID(doctor_id)) {
@@ -114,53 +120,7 @@ router.get('/schedule', async (req, res) => {
 router.post('/appointments', async (req, res) => {
     try {
         const { patient_id, doctor_id, schedule_id } = req.body;
-        
-        // Проверка обязательных полей
-        const validation = validateRequiredFields(
-            { patient_id, doctor_id, schedule_id },
-            ['patient_id', 'doctor_id', 'schedule_id']
-        );
-        
-        if (!validation.isValid) {
-            return res.status(400).json(
-                formatError(`Обязательные поля: ${validation.missingFields.join(', ')}`)
-            );
-        }
-        
-        // Валидация UUID через утилиту
-        if (!validateUUID(patient_id)) {
-            return res.status(400).json(formatError('Неверный формат ID пациента'));
-        }
-        
-        if (!validateUUID(doctor_id)) {
-            return res.status(400).json(formatError('Неверный формат ID врача'));
-        }
-        
-        if (!validateUUID(schedule_id)) {
-            return res.status(400).json(formatError('Неверный формат ID слота'));
-        }
-        
-        const result = await db.transaction(async (connection) => {
-            // Проверяем пациента
-            const patient = await routesActions.patientIdIsExists(patient_id);
-            if (!patient) {
-                throw new Error('Пациент не найден');
-            }
-            
-            // Проверяем врача
-            const doctor = await routesActions.doctorIdIsExists(doctor_id);
-            if (!doctor) {
-                throw new Error('Врач не найден');
-            }
-            
-            // Проверяем и блокируем слот
-            await routesActions.scheduleIsEnable(connection, schedule_id, doctor_id);
-            
-            // Бронируем слот
-            await routesActions.reserveSchedule(connection, patient_id, schedule_id);
-            
-            return { schedule_id, patient_id, doctor_id };
-        });
+        const result = await routesActions.createAppointment(patient_id, doctor_id, schedule_id);
         
         res.status(201).json(
             formatResponse(true, result, 'Запись на приём успешно создана')
@@ -168,16 +128,37 @@ router.post('/appointments', async (req, res) => {
         
     } catch (error) {
         console.error('Ошибка записи на приём:', error);
-        
-        const errorMap = {
-            'Пациент не найден': 404,
-            'Врач не найден': 404,
-            'Слот не найден': 404,
-            'Слот уже занят': 409,
-            'Нельзя записаться на прошедший слот': 400
-        };
-        
-        const statusCode = errorMap[error.message] || 500;
+
+        const statusCode = error.statusCode || 500;
+        res.status(statusCode).json(formatError(error.message, statusCode));
+    }
+});
+
+router.post('/appointments/by-time', async (req, res) => {
+    try {
+        const { patient_id, doctor_id, date, time_from } = req.body;
+
+        if (!validateDate(date)) {
+            return res.status(400).json(
+                formatError('Неверный формат даты. Используйте YYYY-MM-DD')
+            );
+        }
+
+        if (!/^\d{2}:\d{2}$/.test(time_from)) {
+            return res.status(400).json(
+                formatError('Неверный формат времени. Используйте HH:mm')
+            );
+        }
+
+        const result = await routesActions.createAppointmentByTime(patient_id, doctor_id, date, time_from);
+
+        res.status(201).json(
+            formatResponse(true, result, 'Запись на приём успешно создана')
+        );
+    } catch (error) {
+        console.error('Ошибка записи на приём по времени:', error);
+
+        const statusCode = error.statusCode || 500;
         res.status(statusCode).json(formatError(error.message, statusCode));
     }
 });
@@ -186,5 +167,70 @@ router.get('/ping', (req, res) => {
     res.json({ ping: 'pong' });
 })
 
+// проверка на существование клиента по номеру телефона
+router.get('/client-exists', async (req, res) => {
+    const { phone } = req.query;
+
+    try {
+        const clientsInfo = await routesActions.patientIsExistsByPhone(phone);
+    } catch (e) {
+        console.log('src/routes.js:213', e);
+    }
+
+    res.json({ client_exists: clientsInfo });
+});
+
+router.get('/get-doctor', async (req, res) => {
+    try {
+        const { name, surname, patronymic, spec } = req.query;
+
+        const validation = validateRequiredFields(
+            { name, surname, patronymic, spec },
+            ['name', 'surname', 'patronymic', 'spec']
+        );
+
+        if (!validation.isValid) {
+            return res.status(400).json(
+                formatError(`Обязательные поля: ${validation.missingFields.join(', ')}`)
+            );
+        }
+
+        const doctorId = await routesActions.getDoctor(name, surname, patronymic, spec);
+
+        if (!doctorId) {
+            return res.status(404).json(formatError('Врач не найден', 404));
+        }
+
+        res.json(formatResponse(true, { doctorId }));
+    } catch (error) {
+        console.error('Ошибка получения врача:', error);
+        res.status(500).json(formatError('Внутренняя ошибка сервера', 500));
+    }
+});
+
+router.get('/get-patient', async (req, res) => {
+    try {
+        const { phone } = req.query;
+
+        const validation = validateRequiredFields({ phone }, ['phone']);
+
+        if (!validation.isValid) {
+            return res.status(400).json(
+                formatError(`Обязательные поля: ${validation.missingFields.join(', ')}`)
+            );
+        }
+
+        const patientId = await routesActions.getPatientByPhone(phone);
+
+        if (!patientId) {
+            return res.status(404).json(formatError('Пациент не найден', 404));
+        }
+
+        res.json(formatResponse(true, { patientId }));
+    } catch (error) {
+        console.error('Ошибка получения пациента:', error);
+        res.status(500).json(formatError('Внутренняя ошибка сервера', 500));
+    }
+});
 
 module.exports = router;

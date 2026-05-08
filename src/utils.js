@@ -25,6 +25,16 @@ function validateDate(date) {
     return !isNaN(parsedDate.getTime());
 }
 
+function validateDateNotInPast(date) {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    const today = `${year}-${month}-${day}`;
+
+    return date >= today;
+}
+
 function validateDateTime(datetime) {
     if (!datetime) {
         return false;
@@ -112,6 +122,7 @@ module.exports = {
     isSlotInPast,
     validateGender,
     validateDateTime,
+    validateDateNotInPast,
     validateDate,
     validatePhone,
     generateUUID,

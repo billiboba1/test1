@@ -112,6 +112,36 @@ function delay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+/** «17 мая» из строки `YYYY-MM-DD` (локаль ru-RU, родительный падеж месяца). */
+const formatDateInUserView = (date) => {
+    if (!date || typeof date !== 'string') {
+        return '';
+    }
+
+    const match = date.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!match) {
+        return '';
+    }
+
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+
+    const local = new Date(year, month - 1, day);
+    if (
+        local.getFullYear() !== year ||
+        local.getMonth() !== month - 1 ||
+        local.getDate() !== day
+    ) {
+        return '';
+    }
+
+    return new Intl.DateTimeFormat('ru-RU', {
+        day: 'numeric',
+        month: 'long',
+    }).format(local);
+};
+
 module.exports = {
     delay,
     cleanObject,
@@ -126,4 +156,5 @@ module.exports = {
     validateDate,
     validatePhone,
     generateUUID,
+    formatDateInUserView,
 }

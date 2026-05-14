@@ -32,6 +32,13 @@ class dbController {
         return rows;
     }
 
+    async executeCommand(sql, params = []) {
+        this.#connect();
+
+        const [header] = await this.pool.execute(sql, params);
+        return header;
+    }
+
     async transaction(callback) {
         this.#connect();
 

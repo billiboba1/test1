@@ -13,6 +13,17 @@ const {
 
 const router = express.Router();
 
+function requireNotificationSecret(req, res, next) {
+    const secret = process.env.NOTIFICATION_INTERNAL_SECRET;
+    if (!secret) {
+        return next();
+    }
+    if (req.get('X-Internal-Secret') !== secret) {
+        return res.status(401).json(formatError('Неверный или отсутствует заголовок X-Internal-Secret', 401));
+    }
+    return next();
+}
+
 // ============= 1. РЕГИСТРАЦИЯ ПАЦИЕНТА =============
 router.post('/patients', async (req, res) => {
     try {
@@ -169,33 +180,47 @@ router.get('/ping', (req, res) => {
 
 // проверка на существование клиента по номеру телефона
 router.get('/client-exists', async (req, res) => {
-    const { phone } = req.query;
-
     try {
-        const clientsInfo = await routesActions.patientIsExistsByPhone(phone);
-    } catch (e) {
-        console.log('src/routes.js:213', e);
-    }
+        const { phone } = req.query;
 
-    res.json({ client_exists: clientsInfo });
-});
-
-router.get('/get-doctor', async (req, res) => {
-    try {
-        const { name, surname, patronymic, spec } = req.query;
-
-        const validation = validateRequiredFields(
-            { name, surname, patronymic, spec },
-            ['name', 'surname', 'patronymic', 'spec']
-        );
-
+        const validation = validateRequiredFields({ phone }, ['phone']);
         if (!validation.isValid) {
             return res.status(400).json(
                 formatError(`Обязательные поля: ${validation.missingFields.join(', ')}`)
             );
         }
 
-        const doctorId = await routesActions.getDoctor(name, surname, patronymic, spec);
+        const rows = await routesActions.patientIsExistsByPhone(phone);
+        res.json(formatResponse(true, { client_exists: rows.length > 0 }));
+    } catch (error) {
+        console.error('Ошибка проверки клиента:', error);
+        res.status(500).json(formatError('Внутренняя ошибка сервера', 500));
+    }
+});
+
+router.get('/get-doctor', async (req, res) => {
+    try {
+        const filters = {};
+        for (const key of ['name', 'surname', 'patronymic', 'spec']) {
+            const v = req.query[key];
+            if (v === undefined || v === null || v === '') {
+                continue;
+            }
+            const trimmed = String(v).trim();
+            if (trimmed !== '') {
+                filters[key] = trimmed;
+            }
+        }
+
+        if (Object.keys(filters).length === 0) {
+            return res.status(400).json(
+                formatError(
+                    'Укажите хотя бы один непустой параметр: name, surname, patronymic, spec'
+                )
+            );
+        }
+
+        const doctorId = await routesActions.getDoctor(filters);
 
         if (!doctorId) {
             return res.status(404).json(formatError('Врач не найден', 404));
@@ -230,6 +255,57 @@ router.get('/get-patient', async (req, res) => {
     } catch (error) {
         console.error('Ошибка получения пациента:', error);
         res.status(500).json(formatError('Внутренняя ошибка сервера', 500));
+    }
+});
+
+// ============= Задачи на оповещение (RobotMIA) =============
+router.post('/notification-tasks/batch', requireNotificationSecret, async (req, res) => {
+    try {
+        const { tasks: taskList, initial_status } = req.body;
+        if (!Array.isArray(taskList)) {
+            return res.status(400).json(formatError('Ожидается массив body.tasks', 400));
+        }
+        const result = await routesActions.createNotificationTasks(
+            taskList,
+            initial_status || 'new'
+        );
+        res.status(201).json(formatResponse(true, result, 'Задачи сохранены'));
+    } catch (error) {
+        console.error('notification-tasks/batch:', error);
+        const statusCode = error.statusCode || 500;
+        res.status(statusCode).json(formatError(error.message, statusCode));
+    }
+});
+
+router.get('/notification-tasks/ready-for-dispatch', requireNotificationSecret, async (req, res) => {
+    try {
+        const rows = await routesActions.getTasksReadyForRobotMia();
+        res.json(formatResponse(true, { count: rows.length, tasks: rows }));
+    } catch (error) {
+        console.error('notification-tasks/ready-for-dispatch:', error);
+        res.status(500).json(formatError('Внутренняя ошибка сервера', 500));
+    }
+});
+
+router.post('/notification-tasks/dispatch-robotmia', requireNotificationSecret, async (req, res) => {
+    try {
+        const result = await routesActions.dispatchTasksToRobotMia();
+        res.json(formatResponse(true, result));
+    } catch (error) {
+        console.error('notification-tasks/dispatch-robotmia:', error);
+        const statusCode = error.statusCode || 500;
+        res.status(statusCode).json(formatError(error.message, statusCode));
+    }
+});
+
+router.post('/notification-tasks/sync-results', requireNotificationSecret, async (req, res) => {
+    try {
+        const result = await routesActions.syncResultsFromRobotMia();
+        res.json(formatResponse(true, result));
+    } catch (error) {
+        console.error('notification-tasks/sync-results:', error);
+        const statusCode = error.statusCode || 500;
+        res.status(statusCode).json(formatError(error.message, statusCode));
     }
 });
 

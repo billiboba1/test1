@@ -1,6 +1,7 @@
 // routes.js
 const express = require('express');
-const routesActions = require('./routesActions');
+const routesActions = require('./index/routesActions');
+const notificationTasksActions = require('./notification-tasks/routesActions');
 const {
     generateUUID,
     validateRequiredFields,
@@ -12,17 +13,6 @@ const {
 } = require('./utils');
 
 const router = express.Router();
-
-function requireNotificationSecret(req, res, next) {
-    const secret = process.env.NOTIFICATION_INTERNAL_SECRET;
-    if (!secret) {
-        return next();
-    }
-    if (req.get('X-Internal-Secret') !== secret) {
-        return res.status(401).json(formatError('Неверный или отсутствует заголовок X-Internal-Secret', 401));
-    }
-    return next();
-}
 
 // ============= 1. РЕГИСТРАЦИЯ ПАЦИЕНТА =============
 router.post('/patients', async (req, res) => {
@@ -174,6 +164,22 @@ router.post('/appointments/by-time', async (req, res) => {
     }
 });
 
+/** Отмена записи: освобождение слота и снятие пациента по schedule_id. */
+router.post('/deny-appointment', async (req, res) => {
+    try {
+        const { schedule_id } = req.body;
+        console.log('body', req.body);
+        const result = await routesActions.denyAppointment(schedule_id);
+
+        res.json(formatResponse(true, result, 'Запись отменена, слот свободен'));
+    } catch (error) {
+        console.error('Ошибка deny-appointment:', error);
+        const statusCode = error.statusCode || 500;
+        res.status(statusCode).json(formatError(error.message, statusCode));
+    }
+});
+
+// тест пинг
 router.get('/ping', (req, res) => {
     res.json({ ping: 'pong' });
 })
@@ -198,6 +204,7 @@ router.get('/client-exists', async (req, res) => {
     }
 });
 
+// получение id доктора по фио и специализации
 router.get('/get-doctor', async (req, res) => {
     try {
         const filters = {};
@@ -233,6 +240,7 @@ router.get('/get-doctor', async (req, res) => {
     }
 });
 
+// получение id пациента по номеру телефона
 router.get('/get-patient', async (req, res) => {
     try {
         const { phone } = req.query;
@@ -259,51 +267,37 @@ router.get('/get-patient', async (req, res) => {
 });
 
 // ============= Задачи на оповещение (RobotMIA) =============
-router.post('/notification-tasks/batch', requireNotificationSecret, async (req, res) => {
+/** Schedule → Tasks (без RobotMIA и без Calls). */
+router.post('/notification-tasks/collect', async (req, res) => {
     try {
-        const { tasks: taskList, initial_status } = req.body;
-        if (!Array.isArray(taskList)) {
-            return res.status(400).json(formatError('Ожидается массив body.tasks', 400));
-        }
-        const result = await routesActions.createNotificationTasks(
-            taskList,
-            initial_status || 'new'
-        );
-        res.status(201).json(formatResponse(true, result, 'Задачи сохранены'));
+        const result = await notificationTasksActions.collectTasksFromSchedulesForNotification();
+        res.json(formatResponse(true, result));
     } catch (error) {
-        console.error('notification-tasks/batch:', error);
+        console.error('notification-tasks/collect:', error);
         const statusCode = error.statusCode || 500;
         res.status(statusCode).json(formatError(error.message, statusCode));
     }
 });
 
-router.get('/notification-tasks/ready-for-dispatch', requireNotificationSecret, async (req, res) => {
+/** Tasks → RobotMIA bulk + записи в Calls. */
+router.post('/notification-tasks/calltask', async (req, res) => {
     try {
-        const rows = await routesActions.getTasksReadyForRobotMia();
-        res.json(formatResponse(true, { count: rows.length, tasks: rows }));
-    } catch (error) {
-        console.error('notification-tasks/ready-for-dispatch:', error);
-        res.status(500).json(formatError('Внутренняя ошибка сервера', 500));
-    }
-});
-
-router.post('/notification-tasks/dispatch-robotmia', requireNotificationSecret, async (req, res) => {
-    try {
-        const result = await routesActions.dispatchTasksToRobotMia();
+        const result = await notificationTasksActions.runNotificationCalltask();
         res.json(formatResponse(true, result));
     } catch (error) {
-        console.error('notification-tasks/dispatch-robotmia:', error);
+        console.error('notification-tasks/calltask:', error);
         const statusCode = error.statusCode || 500;
         res.status(statusCode).json(formatError(error.message, statusCode));
     }
 });
 
-router.post('/notification-tasks/sync-results', requireNotificationSecret, async (req, res) => {
+/** Результаты звонков RobotMIA → Calls / Tasks (шаг cron после calltask). */
+router.post('/notification-tasks/result', async (req, res) => {
     try {
-        const result = await routesActions.syncResultsFromRobotMia();
+        const result = await notificationTasksActions.syncResultsFromRobotMia();
         res.json(formatResponse(true, result));
     } catch (error) {
-        console.error('notification-tasks/sync-results:', error);
+        console.error('notification-tasks/result:', error);
         const statusCode = error.statusCode || 500;
         res.status(statusCode).json(formatError(error.message, statusCode));
     }

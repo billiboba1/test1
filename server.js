@@ -2,6 +2,7 @@ const express = require('express');
 require('dotenv').config();
 
 const routes = require('./src/routes');
+const { startNotificationCrons } = require('./src/notification-tasks/notificationCron');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -11,5 +12,5 @@ app.use('/api', routes);
 
 app.listen(PORT, () => {
     console.log(`Сервер запущен на порту ${PORT}`);
-})
-
+    startNotificationCrons();
+});

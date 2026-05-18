@@ -1,5 +1,4 @@
-const dbController = require('./db');
-const robotmia = require('./robotmia');
+const dbController = require('../db');
 
 const {
     validatePhone,
@@ -8,7 +7,7 @@ const {
     validateRequiredFields,
     validateUUID,
     isSlotInPast
-} = require('./utils');
+} = require('../utils');
 
 require('dotenv').config();
 
@@ -19,261 +18,6 @@ function createRequestError(message, statusCode) {
 }
 
 class routesActions extends dbController {
-    constructor(params) {
-        super(params);
-        this._statusIdByName = null;
-    }
-
-    async getStatusIdsMap() {
-        if (this._statusIdByName) {
-            return this._statusIdByName;
-        }
-        const rows = await this.query('SELECT id, name FROM Statuses');
-        const map = {};
-        for (const r of rows) {
-            map[r.name] = r.id;
-        }
-        this._statusIdByName = map;
-        return map;
-    }
-
-    _parseTaskPayload(raw) {
-        if (raw == null) {
-            return {};
-        }
-        if (typeof raw === 'object' && !Buffer.isBuffer(raw)) {
-            return raw;
-        }
-        if (typeof raw === 'string' || Buffer.isBuffer(raw)) {
-            const s = Buffer.isBuffer(raw) ? raw.toString('utf8') : raw;
-            try {
-                return JSON.parse(s);
-            } catch {
-                return {};
-            }
-        }
-        return {};
-    }
-
-    buildRobotPayload(task) {
-        const body = this._parseTaskPayload(task.request_payload);
-        return { ...body, phone: task.phone };
-    }
-
-    async createNotificationTasks(items, initialStatusName = 'new') {
-        if (!Array.isArray(items) || items.length === 0) {
-            throw createRequestError('Ожидается непустой массив tasks', 400);
-        }
-
-        const statusMap = await this.getStatusIdsMap();
-        const statusId = statusMap[initialStatusName] ?? statusMap['new'];
-        if (!statusId) {
-            throw createRequestError('В справочнике статусов нет подходящей записи', 500);
-        }
-
-        const created = [];
-        for (const item of items) {
-            const validation = validateRequiredFields(item, ['phone', 'request_payload']);
-            if (!validation.isValid) {
-                throw createRequestError(
-                    `Задача без полей: ${validation.missingFields.join(', ')}`,
-                    400
-                );
-            }
-            const { phone, request_payload } = item;
-            if (typeof request_payload !== 'object' || request_payload === null || Array.isArray(request_payload)) {
-                throw createRequestError('Поле request_payload должно быть объектом JSON', 400);
-            }
-
-            const header = await this.executeCommand(
-                `INSERT INTO Tasks (phone, request_payload, dial_count, status_id)
-                 VALUES (?, ?, 0, ?)`,
-                [String(phone).trim(), JSON.stringify(request_payload), statusId]
-            );
-            created.push({ id: header.insertId, phone: String(phone).trim() });
-        }
-
-        return { created_count: created.length, tasks: created };
-    }
-
-    async getTasksReadyForRobotMia() {
-        const sql = `
-            SELECT t.id, t.phone, t.request_payload, t.dial_count, s.name AS status_name
-            FROM Tasks t
-            INNER JOIN Statuses s ON s.id = t.status_id
-            WHERE t.dial_count < 3
-              AND s.name NOT IN ('in_progress', 'completed')
-              AND NOT EXISTS (
-                  SELECT 1 FROM Calls c
-                  WHERE c.task_id = t.id AND c.status = 'in_progress'
-              )
-            ORDER BY t.id
-        `;
-        return await this.query(sql);
-    }
-
-    async recordDispatchForTask(task, robotmiaTaskId) {
-        const statusMap = await this.getStatusIdsMap();
-        const inProgressId = statusMap.in_progress;
-        if (!inProgressId) {
-            throw createRequestError('В справочнике нет статуса in_progress', 500);
-        }
-
-        return await this.transaction(async (connection) => {
-            await connection.execute(
-                `INSERT INTO Calls (robotmia_task_id, task_id, phone, status)
-                 VALUES (?, ?, ?, 'in_progress')`,
-                [robotmiaTaskId, task.id, task.phone]
-            );
-            await connection.execute(
-                `UPDATE Tasks SET status_id = ?, dial_count = dial_count + 1 WHERE id = ?`,
-                [inProgressId, task.id]
-            );
-        });
-    }
-
-    async dispatchTasksToRobotMia() {
-        const tasks = await this.getTasksReadyForRobotMia();
-        if (!tasks.length) {
-            return { selected: 0, submitted: 0, mode: 'none', errors: [] };
-        }
-
-        const errors = [];
-        let submitted = 0;
-
-        const settled = await Promise.allSettled(
-            tasks.map((task) =>
-                robotmia
-                    .createCallstack(this.buildRobotPayload(task))
-                    .then((resp) => ({ task, resp }))
-            )
-        );
-
-        for (let i = 0; i < settled.length; i++) {
-            const task = tasks[i];
-            const r = settled[i];
-
-            if (r.status === 'rejected') {
-                const msg = r.reason instanceof Error ? r.reason.message : String(r.reason);
-                errors.push({ task_id: task.id, message: msg });
-                continue;
-            }
-
-            const { resp } = r.value;
-            const ids = robotmia.extractCreatedIds(resp, 1);
-            const rid = ids[0] ?? robotmia.extractCalltaskId(resp);
-            if (!rid) {
-                errors.push({
-                    task_id: task.id,
-                    message: 'В ответе RobotMIA нет идентификатора задачи',
-                });
-                continue;
-            }
-
-            try {
-                await this.recordDispatchForTask(task, String(rid));
-                submitted++;
-            } catch (e) {
-                errors.push({ task_id: task.id, message: e.message });
-            }
-        }
-
-        return {
-            selected: tasks.length,
-            submitted,
-            mode: 'parallel',
-            errors,
-        };
-    }
-
-    async syncResultsFromRobotMia() {
-        const rows = await this.query(
-            `SELECT c.robotmia_task_id, c.task_id, c.phone, t.dial_count AS task_dial_count
-             FROM Calls c
-             INNER JOIN Tasks t ON t.id = c.task_id
-             WHERE c.status = 'in_progress'
-             ORDER BY c.robotmia_task_id`
-        );
-
-        if (!rows.length) {
-            return { checked: 0, updated: 0, skipped: 0, errors: [] };
-        }
-
-        const statusMap = await this.getStatusIdsMap();
-        const idNew = statusMap['new'];
-        const idCompleted = statusMap['completed'];
-        if (!idNew || !idCompleted) {
-            throw createRequestError('В справочнике нет статусов new или completed', 500);
-        }
-
-        const errors = [];
-        let updated = 0;
-        let skipped = 0;
-
-        const settled = await Promise.allSettled(
-            rows.map((row) => robotmia.getCallstackResult(row.robotmia_task_id))
-        );
-
-        for (let i = 0; i < settled.length; i++) {
-            const row = rows[i];
-            const r = settled[i];
-
-            if (r.status === 'rejected') {
-                const msg = r.reason instanceof Error ? r.reason.message : String(r.reason);
-                errors.push({ robotmia_task_id: row.robotmia_task_id, message: msg });
-                continue;
-            }
-
-            const resp = r.value;
-            const entries = robotmia.extractResultEntries(resp);
-            const entry =
-                entries.find(
-                    (x) =>
-                        String(robotmia.extractCalltaskId(x)) === String(row.robotmia_task_id)
-                ) ?? entries[0];
-
-            if (entry == null) {
-                skipped++;
-                continue;
-            }
-
-            const answered = robotmia.inferAnswered(entry);
-            const reached = answered === true;
-
-            let nextStatusId;
-            if (reached) {
-                nextStatusId = idCompleted;
-            } else {
-                const dial = Number(row.task_dial_count) || 0;
-                nextStatusId = dial < 3 ? idNew : idCompleted;
-            }
-
-            try {
-                await this.transaction(async (connection) => {
-                    await connection.execute(
-                        `UPDATE Calls SET status = 'finished', result_json = ?
-                         WHERE robotmia_task_id = ? AND status = 'in_progress'`,
-                        [JSON.stringify(entry), row.robotmia_task_id]
-                    );
-                    await connection.execute(`UPDATE Tasks SET status_id = ? WHERE id = ?`, [
-                        nextStatusId,
-                        row.task_id,
-                    ]);
-                });
-                updated++;
-            } catch (e) {
-                errors.push({ robotmia_task_id: row.robotmia_task_id, message: e.message });
-            }
-        }
-
-        return {
-            checked: rows.length,
-            updated,
-            skipped,
-            errors,
-        };
-    }
-
     async patientIsExistsByPhone(phone) {
         const result = await this.query('SELECT * FROM Patients WHERE phone = ?', [phone]);
         return result;
@@ -504,10 +248,43 @@ class routesActions extends dbController {
     async createAppointmentByTime(patient_id, doctor_id, date, time_from) {
         const schedule_id = await this.getScheduleId(doctor_id, date, time_from);
         if (!schedule_id) {
-            throw createRequestError('Слот не найден', 404);
+            throw createRequestError('Слот не найден', 409);
         }
 
         return await this.createAppointment(patient_id, doctor_id, schedule_id);
+    }
+
+    /**
+     * Отмена записи: только освобождение слота (Tasks/Calls не трогаем — завершатся по result-bulk).
+     */
+    async denyAppointment(schedule_id) {
+        console.log('schedule_id', schedule_id);
+        const validation = validateRequiredFields({ schedule_id }, ['schedule_id']);
+        if (!validation.isValid) {
+            throw createRequestError(`Обязательные поля: ${validation.missingFields.join(', ')}`, 400);
+        }
+
+        if (!validateUUID(schedule_id)) {
+            throw createRequestError('Неверный формат ID слота', 400);
+        }
+
+        return await this.transaction(async (connection) => {
+            const [slots] = await connection.execute(
+                `SELECT id FROM Schedule WHERE id = ? FOR UPDATE`,
+                [schedule_id]
+            );
+
+            if (slots.length === 0) {
+                throw createRequestError('Слот не найден', 404);
+            }
+
+            await connection.execute(
+                `UPDATE Schedule SET is_free = TRUE, patient_id = NULL, type = 0 WHERE id = ?`,
+                [schedule_id]
+            );
+
+            return { schedule_id };
+        });
     }
 
     async patientIdIsExists(patientId) {

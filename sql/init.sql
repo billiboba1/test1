@@ -54,6 +54,7 @@ INSERT IGNORE INTO Statuses (name) VALUES
 -- Задачи для оповещения
 CREATE TABLE IF NOT EXISTS Tasks (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    schedule_id VARCHAR(36) NULL COMMENT 'Слот записи; при удалении слота задача удаляется каскадом',
     phone VARCHAR(20) NOT NULL,
     request_payload JSON NOT NULL COMMENT 'Данные для запроса в API',
     dial_count INT UNSIGNED NOT NULL DEFAULT 0 COMMENT 'Количество дозвонов',
@@ -62,6 +63,10 @@ CREATE TABLE IF NOT EXISTS Tasks (
     CONSTRAINT fk_Tasks_Status FOREIGN KEY (status_id) REFERENCES Statuses (id)
         ON UPDATE CASCADE
         ON DELETE RESTRICT,
+    CONSTRAINT fk_Tasks_Schedule FOREIGN KEY (schedule_id) REFERENCES Schedule (id)
+        ON UPDATE CASCADE
+        ON DELETE CASCADE,
+    UNIQUE KEY uq_Tasks_schedule_id (schedule_id),
     INDEX idx_Tasks_phone (phone),
     INDEX idx_Tasks_status (status_id)
 );
